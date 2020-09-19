@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+  <title>分布式锁的实现之 redis 篇 - Tesla Lyon&#39; Blog</title>
+  <meta name="renderer" content="webkit" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
+
+<meta http-equiv="Cache-Control" content="no-transform" />
+<meta http-equiv="Cache-Control" content="no-siteapp" />
+
+<meta name="theme-color" content="#f8f5ec" />
+<meta name="msapplication-navbutton-color" content="#f8f5ec">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="#f8f5ec">
+
+
+<meta name="author" content="Tesla Lyon" /><meta name="description" content="一、引言 我们在系统中修改已有数据时，需要先读取，然后进行修改保存，此时很容易遇到并发问题。 由于修改和保存不是原子操作，在并发场景下，部分对数" /><meta name="keywords" content="博客" />
+
+
+
+
+
+
+<meta name="generator" content="Hugo 0.74.3 with theme even" />
+
+
+<link rel="canonical" href="http://tsls.vip/post/redis-distributed-lock/" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<link rel="mask-icon" href="/safari-pinned-tab.svg" color="#5bbad5">
+
+
+
+<link href="/sass/main.min.c7bc1becf36bcf6a9ebd25d2947e43a2eb745ddb0c9a32b43126fd7fa460c351.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fancyapps/fancybox@3.1.20/dist/jquery.fancybox.min.css" integrity="sha256-7TyXnr2YU040zfSP+rEcz29ggW4j56/ujTPwjMzyqFY=" crossorigin="anonymous">
+
+
+<meta property="og:title" content="分布式锁的实现之 redis 篇" />
+<meta property="og:description" content="一、引言 我们在系统中修改已有数据时，需要先读取，然后进行修改保存，此时很容易遇到并发问题。 由于修改和保存不是原子操作，在并发场景下，部分对数" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="http://tsls.vip/post/redis-distributed-lock/" />
+<meta property="article:published_time" content="2020-09-18T23:09:23+08:00" />
+<meta property="article:modified_time" content="2020-09-18T23:09:23+08:00" />
+<meta itemprop="name" content="分布式锁的实现之 redis 篇">
+<meta itemprop="description" content="一、引言 我们在系统中修改已有数据时，需要先读取，然后进行修改保存，此时很容易遇到并发问题。 由于修改和保存不是原子操作，在并发场景下，部分对数">
+<meta itemprop="datePublished" content="2020-09-18T23:09:23+08:00" />
+<meta itemprop="dateModified" content="2020-09-18T23:09:23+08:00" />
+<meta itemprop="wordCount" content="1964">
+
+
+
+<meta itemprop="keywords" content="" />
+<meta name="twitter:card" content="summary"/>
+<meta name="twitter:title" content="分布式锁的实现之 redis 篇"/>
+<meta name="twitter:description" content="一、引言 我们在系统中修改已有数据时，需要先读取，然后进行修改保存，此时很容易遇到并发问题。 由于修改和保存不是原子操作，在并发场景下，部分对数"/>
+
+<!--[if lte IE 9]>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/classlist/1.1.20170427/classList.min.js"></script>
+<![endif]-->
+
+<!--[if lt IE 9]>
+  <script src="https://cdn.jsdelivr.net/npm/html5shiv@3.7.3/dist/html5shiv.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/respond.js@1.4.2/dest/respond.min.js"></script>
+<![endif]-->
+
+</head>
+<body>
+  <div id="mobile-navbar" class="mobile-navbar">
+  <div class="mobile-header-logo">
+    <a href="/" class="logo">Tesla Lyon</a>
+  </div>
+  <div class="mobile-navbar-icon">
+    <span></span>
+    <span></span>
+    <span></span>
+  </div>
+</div>
+<nav id="mobile-menu" class="mobile-menu slideout-menu">
+  <ul class="mobile-menu-list">
+    <a href="/">
+        <li class="mobile-menu-item">首页</li>
+      </a><a href="/post/">
+        <li class="mobile-menu-item">归档</li>
+      </a><a href="/tags/">
+        <li class="mobile-menu-item">标签</li>
+      </a><a href="/categories/">
+        <li class="mobile-menu-item">分类</li>
+      </a>
+  </ul>
+</nav>
+  <div class="container" id="mobile-panel">
+    <header id="header" class="header">
+        <div class="logo-wrapper">
+  <a href="/" class="logo">Tesla Lyon</a>
+</div>
+
+<nav class="site-navbar">
+  <ul id="menu" class="menu">
+    <li class="menu-item">
+        <a class="menu-item-link" href="/">首页</a>
+      </li><li class="menu-item">
+        <a class="menu-item-link" href="/post/">归档</a>
+      </li><li class="menu-item">
+        <a class="menu-item-link" href="/tags/">标签</a>
+      </li><li class="menu-item">
+        <a class="menu-item-link" href="/categories/">分类</a>
+      </li>
+  </ul>
+</nav>
+    </header>
+
+    <main id="main" class="main">
+      <div class="content-wrapper">
+        <div id="content" class="content">
+          <article class="post">
+    
+    <header class="post-header">
+      <h1 class="post-title">分布式锁的实现之 redis 篇</h1>
+
+      <div class="post-meta">
+        <span class="post-time"> 2020-09-18 </span>
+        
+        
+      </div>
+    </header>
+
+    <div class="post-toc" id="post-toc">
+  <h2 class="post-toc-title">Contents</h2>
+  <div class="post-toc-content always-active">
+    <nav id="TableOfContents">
+  <ul>
+    <li><a href="#一引言">一、引言</a></li>
+    <li><a href="#二实现">二、实现</a>
+      <ul>
+        <li><a href="#1setnx-和-expire-非原子性">1.SETNX 和 EXPIRE 非原子性</a></li>
+        <li><a href="#2锁误解除">2.锁误解除</a></li>
+        <li><a href="#3超时解锁导致并发">3.超时解锁导致并发</a></li>
+        <li><a href="#4不可重入">4.不可重入</a></li>
+        <li><a href="#5无法等待锁释放">5.无法等待锁释放</a></li>
+      </ul>
+    </li>
+    <li><a href="#三集群">三、集群</a></li>
+    <li><a href="#四结语">四、结语</a></li>
+  </ul>
+</nav>
+  </div>
+</div>
+    <div class="post-content">
+      <h1 id="一引言">一、引言</h1>
+<p>我们在系统中修改已有数据时，需要先读取，然后进行修改保存，此时很容易遇到并发问题。</p>
+<p>由于修改和保存不是原子操作，在并发场景下，部分对数据的操作可能会丢失。</p>
+<p>在单服务器系统，我们常用本地锁来避免并发带来的问题，然而，当服务采用集群方式部署时，本地锁无法再多个服务器之间生效，这时候保证数据的一致性就需要分布式锁来实现。</p>
+<p><img src="https://xiaomi-info.github.io/2019/12/17/redis-distributed-lock/redis-lock-01.png" alt="分布式锁的实现之 redis 篇"></p>
+<h1 id="二实现">二、实现</h1>
+<p>Redis 锁主要利用 Redis 的 setnx 命令。</p>
+<blockquote>
+<p>Set key to hold string value if key does not exist. In that case, it is equal to SET. When key already holds a value, no operation is performed. SETNX is short for &ldquo;SET if Not eXists&rdquo;.</p>
+</blockquote>
+<ul>
+<li>
+<p>加锁命令：SETNX key value，当键不存在时，对键进行设置操作并返回成功，否则返回失败。KEY 是锁的唯一标识，一般按业务来决定命名。</p>
+</li>
+<li>
+<p>解锁命令：DEL key，通过删除键值来释放锁，以便其他线程可以通过 SETNX 命名来获取锁。</p>
+</li>
+<li>
+<p>锁超时：EXPIRE key timeout，设置 key 的超时时间，以保证即使锁没有被显式释放，锁也可以在一定时间后自动释放，避免资源被永远锁住。</p>
+</li>
+</ul>
+<p>则加锁解锁伪代码如下：</p>
+<pre>
+if (setnx(key, 1) == 1){
+    expire(key, 30)
+    try {
+        //TODO 业务逻辑
+    } finally {
+        del(key)
+    }
+}
+</pre>
+<p><strong>上述锁的实现方式存在一些问题</strong></p>
+<h2 id="1setnx-和-expire-非原子性">1.SETNX 和 EXPIRE 非原子性</h2>
+<p>如果 SETNX 成功，在设置锁超时时间后，服务器挂掉、重启或网络问题等，导致 EXPIRE 命令没有执行，锁没有设置超时时间变成死锁。</p>
+<p><img src="https://xiaomi-info.github.io/2019/12/17/redis-distributed-lock/redis-lock-02.png" alt="分布式锁的实现之 redis 篇"></p>
+<p>在很多开源代码来解决这个问题，比如使用 lua 脚本。示例：</p>
+<pre>
+if (redis.call('setnx', KEYS[1], ARGV[1]) < 1)
+then return 0;
+end;
+redis.call('expire', KEYS[1], tonumber(ARGV[2]));
+return 1;
+
+// 使用实例
+EVAL "if (redis.call('setnx',KEYS[1],ARGV[1]) < 1) then return 0; end; redis.call('expire',KEYS[1],tonumber(ARGV[2])); return 1;" 1 key value 100
+
+</pre>
+<h2 id="2锁误解除">2.锁误解除</h2>
+<p>如果线程 A 成功获取到了锁，并且设置了过期时间 30 秒，但线程 A 执行时间超过了 30 秒，锁过期自动释放，此时线程 B 获取到了锁，随后 A 执行完成，线程 A 使用 DEL 命令来释放锁，但此时线程 B 加的锁还没有执行完成，线程 A 实际释放的线程 B 加的锁。</p>
+<p><img src="https://xiaomi-info.github.io/2019/12/17/redis-distributed-lock/redis-lock-03.png" alt="分布式锁的实现之 redis 篇"></p>
+<p><strong>解决方案：</strong></p>
+<p>通过在 value 中设置当前线程加锁的标识，再删除之前验证 key 对应的 value 是否为当前线程持有。</p>
+<p>可以生成一个 UUID 标识当前线程，使用 lua 脚本做验证标识和解锁操作。</p>
+<pre>
+// 加锁
+String uuid = UUID.randomUUID().toString().replaceAll("-","");
+SET key uuid NX EX 30
+// 解锁
+if (redis.call('get', KEYS[1]) == ARGV[1])
+    then return redis.call('del', KEYS[1])
+else return 0
+end
+</pre>
+<h2 id="3超时解锁导致并发">3.超时解锁导致并发</h2>
+<p>如果线程 A 成功获取锁并设置过期时间 30 秒，但线程 A 执行时间超过了 30 秒，锁过期自动释放，此时线程 B 获取到了锁，线程 A 和线程 B 并发执行。</p>
+<p><img src="https://xiaomi-info.github.io/2019/12/17/redis-distributed-lock/redis-lock-04.png" alt="分布式锁的实现之 redis 篇"></p>
+<p>A 、 B 两个线程发生并发显然是不被允许的，一般有两种方式解决该问题：</p>
+<ul>
+<li>将过期时间设置足够长，确保代码逻辑在锁释放之前执行完成。</li>
+<li>为获取锁的线程增加守护线程，为将要过期但未释放的锁增加有效时间。</li>
+</ul>
+<p><img src="https://xiaomi-info.github.io/2019/12/17/redis-distributed-lock/redis-lock-05.png" alt="分布式锁的实现之 redis 篇"></p>
+<h2 id="4不可重入">4.不可重入</h2>
+<p>当线程在持有锁的情况下再次请求加锁，如果一个锁支持一个线程多次加锁，那么这个锁就是可重入的。</p>
+<p>如果一个不可重入的锁被再次加锁，由于该锁已经被持有，再次加锁会失败。</p>
+<p>Redis 可通过对锁进行重入计数，加锁时加 1 ，解锁时减 1 ，当计数归 0 时释放锁。</p>
+<p>在本地记录重入次数，如 Java 中使用 ThreadLocal 进行重入次数统计，简单示例代码：</p>
+<pre>
+private static ThreadLocal<Map<String, Integer>> LOCKERS = ThreadLocal.withInitial(HashMap::new);
+// 加锁
+public boolean lock(String key) {
+  Map<String, Integer> lockers = LOCKERS.get();
+  if (lockers.containsKey(key)) {
+    lockers.put(key, lockers.get(key) + 1);
+    return true;
+  } else {
+    if (SET key uuid NX EX 30) {
+      lockers.put(key, 1);
+      return true;
+    }
+  }
+  return false;
+}
+// 解锁
+public void unlock(String key) {
+  Map<String, Integer> lockers = LOCKERS.get();
+  if (lockers.getOrDefault(key, 0) <= 1) {
+    lockers.remove(key);
+    DEL key
+  } else {
+    lockers.put(key, lockers.get(key) - 1);
+  }
+}
+</pre>
+<p>本地记录重入次数虽然高效，但如果考虑过期时间和本地、Redis 一致性的问题，就会增加代码的复杂性。另一种方式是 Redis Map 数据结构来实现分布式锁，既存锁的标识也对重入次数进行计数。 Redission 加锁示例：</p>
+ <pre>
+ // 如果 lock_key 不存在
+ if (redis.call('exists', KEYS[1]) == 0)
+ then
+     // 设置 lock_key 线程标识 1 进行加锁
+     redis.call('hset', KEYS[1], ARGV[2], 1);
+     // 设置过期时间
+     redis.call('pexpire', KEYS[1], ARGV[1]);
+     return nil;
+     end;
+ // 如果 lock_key 存在且线程标识是当前欲加锁的线程标识
+ if (redis.call('hexists', KEYS[1], ARGV[2]) == 1)
+     // 自增
+     then redis.call('hincrby', KEYS[1], ARGV[2], 1);
+     // 重置过期时间
+     redis.call('pexpire', KEYS[1], ARGV[1]);
+     return nil;
+     end;
+ // 如果加锁失败，返回锁剩余时间
+ return redis.call('pttl', KEYS[1]);
+ </pre>
+<h2 id="5无法等待锁释放">5.无法等待锁释放</h2>
+<p>上述命令执行都是立即返回的，如果客户端可以等待锁释放就无法使用。</p>
+<ul>
+<li>
+<p>可以通过客户端轮训的方式解决该问题，当未获取到锁时，等待一段时间重新获取锁，直到成功获取锁或等待超时。这种方式比较消耗服务器资源，当并发量比较大时，会影响服务器的效率。</p>
+</li>
+<li>
+<p>另一种方式是使用 Redis 的发布订阅功能，当获取锁失败时，订阅锁释放的消息，获取锁成功后释放时，发送锁释放消息。如下：</p>
+</li>
+</ul>
+<p><img src="https://xiaomi-info.github.io/2019/12/17/redis-distributed-lock/redis-lock-06.png" alt="分布式锁的实现之 redis 篇"></p>
+<h1 id="三集群">三、集群</h1>
+<ol>
+<li>主备切换</li>
+</ol>
+<p>为了保证 Redis 的可用性，一般采用主从方式部署。主从数据同步有异步和同步两种方式，Redis 将指令记录在本地内存 buffer 中，然后异步将 buffer 中的指令同步到从节点，从节点一边执行同步的指令流来达到和主节点一致的状态，一边向主节点反馈同步情况。</p>
+<p>在包含主从模式的集群部署方式中，当主节点挂掉时，从节点会取而代之，但客户端无明显感知。当客户端 A 成功加锁，指令还未同步，此时主节点挂掉，从节点提升为主节点，新的主节点没有锁的数据，当客户端 B 加锁时就会成功。</p>
+<p><img src="https://xiaomi-info.github.io/2019/12/17/redis-distributed-lock/redis-lock-07.png" alt="分布式锁的实现之 redis 篇"></p>
+<p>2.集群脑裂</p>
+<p>集群脑裂指因为网络问题，导致 Redis master 节点跟 slave 节点和 sentinel 集群处于不同的网络分区，因为 sentinel 集群无法感知到 master 的存在，所以将 slave 节点提升为 master 节点，此时存在两个不同的 master 节点。Redis Cluster 集群部署方式同理。</p>
+<p>当不同的客户端连接不同的 master 节点时，两个客户端可以同时拥有同一把锁。如下：</p>
+<p><img src="https://xiaomi-info.github.io/2019/12/17/redis-distributed-lock/redis-lock-08.png" alt="分布式锁的实现之 redis 篇"></p>
+<h1 id="四结语">四、结语</h1>
+<p>Redis 以其高性能著称，但使用其实现分布式锁来解决并发仍存在一些困难。Redis 分布式锁只能作为一种缓解并发的手段，如果要完全解决并发问题，仍需要数据库的防并发手段。</p>
+<blockquote>
+<p>原文地址：<a href="https://xiaomi-info.github.io/2019/12/17/redis-distributed-lock/">分布式锁的实现之 redis 篇</a></p>
+</blockquote>
+
+    </div>
+
+    <div class="post-copyright">
+  <p class="copyright-item">
+    <span class="item-title">Author</span>
+    <span class="item-content">Tesla Lyon</span>
+  </p>
+  <p class="copyright-item">
+    <span class="item-title">LastMod</span>
+    <span class="item-content">
+        2020-09-18
+        
+    </span>
+  </p>
+  
+  
+</div>
+<footer class="post-footer">
+      
+      <nav class="post-nav">
+        
+        <a class="next" href="/post/first/">
+            <span class="next-text nav-default">你好 hugo，你好世界，你好人类</span>
+            <span class="next-text nav-mobile">Next</span>
+            <i class="iconfont icon-right"></i>
+          </a>
+      </nav>
+    </footer>
+  </article>
+        </div>
+        
+
+  
+
+  
+
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="social-links">
+      <a href="mailto:liangshuocj@gmail.com" class="iconfont icon-email" title="email"></a>
+  <a href="http://tsls.vip/index.xml" type="application/rss+xml" class="iconfont icon-rss" title="rss"></a>
+</div>
+
+<div class="copyright">
+  <span class="power-by">
+    Powered by <a class="hexo-link" href="https://gohugo.io">Hugo</a>
+  </span>
+  <span class="division">|</span>
+  <span class="theme-info">
+    Theme - 
+    <a class="theme-link" href="https://github.com/olOwOlo/hugo-theme-even">Even</a>
+  </span>
+
+  
+
+  <span class="copyright-year">
+    &copy; 
+    2020<span class="heart"><i class="iconfont icon-heart"></i></span><span>Tesla Lyon</span>
+  </span>
+</div>
+
+    </footer>
+
+    <div class="back-to-top" id="back-to-top">
+      <i class="iconfont icon-up"></i>
+    </div>
+  </div>
+  
+  <script src="https://cdn.jsdelivr.net/npm/jquery@3.2.1/dist/jquery.min.js" integrity="sha256-hwg4gsxgFZhOsEEamdOYGBf13FyQuiTwlAQgxVSNgt4=" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/slideout@1.0.1/dist/slideout.min.js" integrity="sha256-t+zJ/g8/KXIJMjSVQdnibt4dlaDxc9zXr/9oNPeWqdg=" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@fancyapps/fancybox@3.1.20/dist/jquery.fancybox.min.js" integrity="sha256-XVLffZaxoWfGUEbdzuLi7pwaUJv1cecsQJQqGLe7axY=" crossorigin="anonymous"></script>
+
+
+
+<script type="text/javascript" src="/js/main.min.c12618f9a600c40bd024996677e951e64d3487006775aeb22e200c990006c5c7.js"></script>
+
+
+
+
+
+
+
+
+</body>
+</html>
